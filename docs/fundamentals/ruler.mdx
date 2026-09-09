@@ -167,6 +167,9 @@ Rank 3: Score 0.100
 You can use any LLM supported by LiteLLM as the judge:
 
 ```python
+# Using aimlapi.com — see the integration guide for setup and cost tracking
+await ruler_score_group(group, "aiml/openai/gpt-5-5")
+
 # Using o4-mini
 await ruler_score_group(group, "openai/o4-mini")
 
@@ -176,6 +179,12 @@ await ruler_score_group(group, "anthropic/claude-sonnet-4-20250514")
 # Using local models
 await ruler_score_group(group, "ollama/qwen3:32b")
 ```
+
+<Note>
+  Judging through a gateway such as [aimlapi.com](/integrations/aimlapi) gives
+  you one key for many judge models. Note that judge cost metrics need an extra
+  step for any provider prefix other than `openai` or `anthropic`.
+</Note>
 
 ### Extra LiteLLM Parameters
 

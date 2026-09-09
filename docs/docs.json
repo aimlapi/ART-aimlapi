@@ -75,6 +75,7 @@
       {
         "group": "Integrations",
         "pages": [
+          "integrations/aimlapi",
           "integrations/langgraph-integration",
           "integrations/openenv-integration"
         ]

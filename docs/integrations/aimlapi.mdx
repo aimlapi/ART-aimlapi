@@ -1,0 +1,129 @@
+---
+title: "aimlapi.com"
+description: "Use AI/ML API as the LLM judge for RULER, through LiteLLM's aiml provider."
+---
+
+# aimlapi.com
+
+[AI/ML API](https://aimlapi.com) is an OpenAI-compatible gateway that serves a
+few hundred chat models behind a single key and base URL. ART reaches it through
+LiteLLM, which ships a first-class `aiml` provider, so nothing needs to be
+installed or configured beyond an API key.
+
+This is useful when you want a strong judge model for
+[RULER](/fundamentals/ruler) without holding a separate account with each model
+vendor.
+
+## Setup
+
+Export your key. LiteLLM reads `AIML_API_KEY`:
+
+```bash
+export AIML_API_KEY="..."
+```
+
+<Note>
+  The environment variable is `AIML_API_KEY`, not `AIMLAPI_API_KEY`. LiteLLM
+  chose the shorter spelling, and a wrong name surfaces only as a 401 on the
+  first judge call.
+</Note>
+
+## Using AI/ML API as a RULER judge
+
+Prefix any AI/ML API model id with `aiml/` and pass it as the judge model:
+
+```python
+import art
+from art.rewards import ruler_score_group
+
+group = art.TrajectoryGroup([...])
+
+judged_group = await ruler_score_group(group, "aiml/openai/gpt-5-5")
+```
+
+The same prefix works with the lower-level `ruler` function:
+
+```python
+from art.rewards.ruler import ruler
+
+scores = await ruler(message_lists, judge_model="aiml/anthropic/claude-sonnet-4.6")
+```
+
+## Model ids
+
+AI/ML API ids are themselves namespaced (`openai/gpt-5-5`,
+`anthropic/claude-sonnet-4.6`, `google/gemini-2.5-flash`), so a judge model
+string carries two slashes: `aiml/<vendor>/<model>`. Only the first segment is
+consumed as the provider, and the rest is forwarded verbatim.
+
+Browse the catalog at `https://api.aimlapi.com/v1/models` (public, no key
+required). Filter to models whose `type` is `openai/chat-completions` — the
+catalog also contains image, video and audio models that cannot serve a judge
+request.
+
+<Note>
+  Ids are also matched against each model's `aliases`, so a spelling that is
+  absent from the `id` field may still route. Add `?include=all` to the catalog
+  request to get `capabilities`, `modalities` and `pricing`, none of which
+  appear in the default response.
+</Note>
+
+## Overriding the base URL
+
+The default base URL is `https://api.aimlapi.com/v1`. To point at a proxy or a
+regional endpoint, set `AIML_API_BASE`, or pass it per call:
+
+```python
+await ruler_score_group(
+    group,
+    "aiml/openai/gpt-5-5",
+    extra_litellm_params={"api_base": "https://your-proxy.example.com/v1"},
+)
+```
+
+## Cost tracking
+
+RULER records judge spend under `costs/<context>/judge/ruler`, but it can only
+derive that number for providers it has a pricing path for. AI/ML API model ids
+are not in LiteLLM's pricing map, so by default the judge runs correctly and the
+cost metric is simply absent — `ruler` swallows the resulting `ValueError` on
+purpose, because it supports local and custom LiteLLM models that have no
+pricing.
+
+To record judge cost, register a cost extractor for the `aiml` provider on your
+`MetricsBuilder`. Take the per-million rates from the `pricing` block of the
+catalog entry for the model you are judging with:
+
+```python
+PROMPT_PER_MILLION = ...      # from the model's catalog pricing
+COMPLETION_PER_MILLION = ...
+
+
+def aiml_judge_cost(response) -> float | None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    prompt = float(getattr(usage, "prompt_tokens", 0) or 0)
+    completion = float(getattr(usage, "completion_tokens", 0) or 0)
+    return (
+        prompt / 1_000_000 * PROMPT_PER_MILLION
+        + completion / 1_000_000 * COMPLETION_PER_MILLION
+    )
+
+
+metrics_builder.register_cost_extractor("aiml", aiml_judge_cost)
+```
+
+<Note>
+  `register_model_pricing` alone is not enough here. Cost is estimated from
+  token counts only for the `openai` and `anthropic` provider prefixes, so a
+  judge model reached through any other provider — `aiml`, `groq`, `together`,
+  `ollama` — needs the extractor above. This applies to AI/ML API only because
+  of the provider prefix; the responses themselves are OpenAI-shaped.
+</Note>
+
+<Note>
+  On some models `completion_tokens` excludes reasoning tokens, so an extractor
+  built on `completion_tokens` alone can under-report spend for reasoning
+  models. Compare against `total_tokens` if that matters for your budget.
+</Note>
